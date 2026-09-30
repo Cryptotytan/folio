@@ -1,4 +1,4 @@
-# FAULTLINE
+# FOLIO
 
 The living map of crypto markets.
 
@@ -10,7 +10,7 @@ Most crypto interfaces are tables of prices. A price can rise while participatio
 
 ## Solution
 
-FAULTLINE turns a market snapshot into a world.
+FOLIO turns a market snapshot into a world.
 
 - Cities are assets. Size is market cap. Brightness is trading activity.
 - Continents are categories, placed so behaviorally similar groups sit near each other.

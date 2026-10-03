@@ -521,7 +521,7 @@ async function pull(): Promise<Book> {
     }
     if (!quotes.length) {
       if (cache?.source === "okx" && cache.quotes.length) return cache;
-      return { day, source: "model", quotes: [], at: 0 };
+      return { day, source: "model", quotes: [] };
     }
     if (quotes.length) settle(quotes);
     cache = { day, source: "okx", quotes, at: Date.now() };
@@ -534,7 +534,7 @@ async function pull(): Promise<Book> {
     });
   } catch {
     if (cache?.source === "okx" && cache.quotes.length) return cache;
-    return { day, source: "model", quotes: [], at: 0 };
+    return { day, source: "model", quotes: [] };
   } finally {
     clearTimeout(timer);
   }

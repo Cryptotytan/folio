@@ -373,7 +373,7 @@ export function buildWorld(): World {
       const members = byCat.get(a.category)!;
       let catNow = 0;
       let catPrev = 0;
-      let ownPrev = mean(a.volume, Math.max(0, t - 36), Math.max(0, t - 30));
+      const ownPrev = mean(a.volume, Math.max(0, t - 36), Math.max(0, t - 30));
       for (const m of members) {
         catNow += mean(m.volume, t - 6, t);
         catPrev += mean(m.volume, Math.max(0, t - 36), Math.max(0, t - 30));

@@ -1,8 +1,9 @@
-import { Link, Outlet, useRouter, useRouterState } from "@tanstack/react-router";
+import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { Activity, Dna, HeartPulse, LayoutDashboard, Search, ShieldAlert, Waypoints } from "lucide-react";
 import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode, Component } from "react";
 import { formatPct, formatUsd } from "@/lib/faultline/format";
-import { ASSETS, SECTORS, applyLiveBook, asOf, bookLabel, bookReady, editionStamp, faults, msUntilUtcMidnight, refreshIfNewDay, subscribeEdition } from "@/lib/faultline/view";
+import { applyLiveBook, asOf, bookLabel, bookReady, editionStamp, faults, msUntilUtcMidnight, refreshIfNewDay, subscribeEdition } from "@/lib/faultline/view";
+import { DeskSwitch, useDesk } from "@/lib/faultline/desk";
 import { loadDailyBook, loadMarketJournal } from "@/lib/faultline/book.functions";
 import { recordFaults, mergeServerFaults } from "@/lib/faultline/fault-history";
 import { recordCatchup, mergeServerNotices } from "@/lib/faultline/catchup";
@@ -27,6 +28,13 @@ export function useMarketEdition() {
   return useSyncExternalStore(subscribeEdition, editionStamp, editionStamp);
 }
 
+const STOCK_LOGOS = new Set([
+  "SPY", "QQQ", "DIA", "IWM", "AAPL", "MSFT", "NVDA", "AVGO", "ORCL", "AMD",
+  "AMZN", "TSLA", "WMT", "COST", "HD", "PG", "KO", "META", "GOOGL", "NFLX",
+  "DIS", "JPM", "V", "MA", "BAC", "UNH", "LLY", "JNJ", "XOM", "CVX",
+  "GOLD", "SILVER", "COPPER", "PLAT", "WTI", "BRENT", "NATGAS", "CORN", "WHEAT", "COFFEE", "SUGAR",
+]);
+
 export function Token({ symbol, size = 24 }: { symbol: string; size?: number }) {
   const [failed, setFailed] = useState(false);
   if (failed) {
@@ -40,15 +48,16 @@ export function Token({ symbol, size = 24 }: { symbol: string; size?: number }) 
       </span>
     );
   }
+  const stock = STOCK_LOGOS.has(symbol.toUpperCase());
   return (
     <img
-      src={`/coins/${symbol.toLowerCase()}.png`}
+      src={stock ? `/stocks/${symbol.toUpperCase()}.png` : `/coins/${symbol.toLowerCase()}.png`}
       alt=""
       width={size}
       height={size}
       loading="lazy"
       decoding="async"
-      className="token shrink-0"
+      className={`shrink-0 ${stock ? "rounded-full bg-white object-contain" : "token"}`}
       style={{ width: size, height: size }}
       onError={() => setFailed(true)}
     />
@@ -56,12 +65,7 @@ export function Token({ symbol, size = 24 }: { symbol: string; size?: number }) 
 }
 
 function Mark() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden>
-      <rect width="22" height="22" rx="6" fill="var(--color-ink)" />
-      <path d="M4.5 14.2 8.8 9.2l2.6 2.8L17.2 6.4" fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
+  return <img src="/mark.png" alt="" width={22} height={22} className="size-[22px] shrink-0" />;
 }
 
 let flight: Promise<void> | null = null;
@@ -114,12 +118,14 @@ export function useLiveBook() {
   useMarketEdition();
   useEffect(() => {
     ensureBook();
-    const id = window.setInterval(() => ensureBook(true), 20000);
-    return () => window.clearInterval(id);
+    const soon = window.setTimeout(() => ensureBook(true), 25_000);
+    const id = window.setInterval(() => ensureBook(true), 60_000);
+    return () => {
+      window.clearTimeout(soon);
+      window.clearInterval(id);
+    };
   }, []);
 }
-
-const WARM = ["/app", "/sectors", "/faults", "/dna", "/health", "/search"] as const;
 
 export function AppFrame() {
   const path = useRouterState({ select: (s) => s.location.pathname });
@@ -133,7 +139,6 @@ export function AppFrame() {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
-  const router = useRouter();
   const [searchOpen, setSearchOpen] = useState(false);
   const edition = useMarketEdition();
   useEffect(() => {
@@ -152,23 +157,21 @@ export function AppShell({ children }: { children: ReactNode }) {
         .catch(() => {});
     };
     journal();
-    const warm = window.setTimeout(() => {
-      for (const to of WARM) router.preloadRoute({ to }).catch(() => {});
-    }, 40);
+    const soon = window.setTimeout(() => ensureBook(true), 25_000);
     const refresh = window.setInterval(() => {
       ensureBook(true);
       journal();
-    }, 20000);
-    const timer = window.setTimeout(() => {
+    }, 60_000);
+    const midnight = window.setTimeout(() => {
       refreshIfNewDay();
       ensureBook(true);
     }, msUntilUtcMidnight());
     return () => {
-      window.clearTimeout(warm);
+      window.clearTimeout(soon);
       window.clearInterval(refresh);
-      window.clearTimeout(timer);
+      window.clearTimeout(midnight);
     };
-  }, [router]);
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -199,7 +202,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <Link
                   key={item.to}
                   to={item.to}
-                  preload="render"
+                  preload="intent"
                   aria-current={on ? "page" : undefined}
                   className={`relative inline-flex items-center px-3 text-[15px] ${on ? "font-medium text-ink" : "text-muted hover:text-ink"}`}
                 >
@@ -218,6 +221,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 pt-5 pb-24 md:px-5 md:pt-8 md:pb-16">
+        {path.startsWith("/methodology") ? null : <DeskSwitch />}
         <PageGuard resetKey={path}>{children}</PageGuard>
       </main>
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden" aria-label="Mobile">
@@ -227,7 +231,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             const on = path === item.to || path.startsWith(`${item.to}/`);
             return (
               <li key={item.to}>
-                <Link to={item.to} preload="render" aria-current={on ? "page" : undefined} className={`flex h-14 flex-col items-center justify-center gap-0.5 text-[10px] ${on ? "text-blue" : "text-muted"}`}>
+                <Link to={item.to} preload="intent" aria-current={on ? "page" : undefined} className={`flex h-14 flex-col items-center justify-center gap-0.5 text-[10px] ${on ? "text-blue" : "text-muted"}`}>
                   <Icon className="size-5" aria-hidden />
                   {item.label}
                 </Link>
@@ -250,10 +254,13 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
   const [q, setQ] = useState("");
   const [cursor, setCursor] = useState(0);
   const edition = useMarketEdition();
+  const desk = useDesk();
   const sections = useMemo(() => {
     const query = q.trim().toLowerCase();
     const hit = (text: string) => text.toLowerCase().includes(query);
-    const assets = (query ? ASSETS.filter((n) => hit(`${n.symbol} ${n.name} ${n.category}`)) : [...ASSETS].sort((a, b) => b.change1 - a.change1))
+    const book = desk.assets;
+    const groups = desk.sectors;
+    const assets = (query ? book.filter((n) => hit(`${n.symbol} ${n.name} ${n.category}`)) : [...book].sort((a, b) => b.change1 - a.change1))
       .slice(0, query ? 6 : 5)
       .map(
         (n): Result => ({
@@ -265,7 +272,7 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
           change1: n.change1,
         }),
       );
-    const sectors = (query ? SECTORS.filter((s) => hit(`${s.name} ${s.id}`)) : [...SECTORS].sort((a, b) => b.rotation - a.rotation))
+    const sectors = (query ? groups.filter((s) => hit(`${s.name} ${s.id}`)) : [...groups].sort((a, b) => b.rotation - a.rotation))
       .slice(0, query ? 4 : 3)
       .map(
         (s): Result => ({
@@ -284,7 +291,7 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
       { title: query ? "Sectors" : "In focus", rows: sectors },
       { title: "Pages", rows: pages },
     ].filter((section) => section.rows.length > 0);
-  }, [q, edition]);
+  }, [q, edition, desk.kind, desk.assets, desk.sectors]);
   const flat = sections.flatMap((section) => section.rows);
 
   return (
@@ -312,7 +319,7 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
                 document.querySelector<HTMLAnchorElement>("[data-search-active]")?.click();
               } else if (e.key === "Escape") onClose();
             }}
-            placeholder="Search a coin, a sector, or a page"
+            placeholder={desk.kind === "equities" ? "Search a stock, a sector, or a page" : "Search a coin, a sector, or a page"}
             className="h-12 w-full bg-transparent text-base outline-none"
           />
           <button type="button" className="rounded-md border border-line px-1.5 py-0.5 text-[10px] text-muted" onClick={onClose}>
@@ -372,16 +379,17 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
 }
 
 export function PageHead({ kicker, title, text }: { kicker: string; title: string; text: string }) {
+  const mounted = useSyncExternalStore(() => () => {}, () => true, () => false);
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-3 border-b border-line pb-4 md:mb-8 md:pb-6">
       <div>
         <p className="kicker">{kicker}</p>
-        <h1 className="mt-2 max-w-3xl text-3xl md:text-4xl">{title}</h1>
+        <h1 className="mt-2 max-w-3xl text-2xl sm:text-3xl md:text-4xl">{title}</h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted md:mt-3 md:text-[15px]">{text}</p>
       </div>
       <p className="chip">
         <i />
-        {asOf} · {bookLabel()}
+        {asOf} · {mounted ? bookLabel() : "Waiting"}
       </p>
     </div>
   );

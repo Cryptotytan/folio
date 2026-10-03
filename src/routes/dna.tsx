@@ -1,7 +1,8 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { PageHead, useMarketEdition } from "@/components/fl/shell";
-import { dnaRanked, type Asset } from "@/lib/faultline/view";
+import { useMemo, useState, useSyncExternalStore } from "react";
+import { PageHead, Token, useMarketEdition } from "@/components/fl/shell";
+import { dnaRanked, initialDnaRanked, subscribeEdition, type Asset } from "@/lib/faultline/view";
+import { useDesk } from "@/lib/faultline/desk";
 
 export const Route = createFileRoute("/dna")({
   component: DnaPage,
@@ -16,17 +17,20 @@ function tone(dna: number | null) {
 
 function DnaPage() {
   const edition = useMarketEdition();
+  const desk = useDesk();
+  const liveRanked = useSyncExternalStore(subscribeEdition, () => dnaRanked, () => initialDnaRanked);
+  const ranked = desk.kind === "crypto" ? liveRanked : desk.dnaRanked;
   const [q, setQ] = useState("");
   const rows = useMemo(() => {
     const query = q.trim().toLowerCase();
-    return dnaRanked.filter((n) => !query || n.symbol.toLowerCase().includes(query) || n.name.toLowerCase().includes(query));
-  }, [q, edition]);
+    return ranked.filter((n) => !query || n.symbol.toLowerCase().includes(query) || n.name.toLowerCase().includes(query));
+  }, [q, edition, ranked]);
   return (
     <>
       <PageHead
         kicker="Market DNA"
         title="When an asset stops behaving like itself"
-        text="Hover a card to turn it. The other side shows who shares this behavior, and how close that match is."
+        text="Hover a card to turn it. The other side shows who shares this behavior, and how close that match is. Folio calculated this from the live price and volume. These are not exchange quotes."
       />
       <input
         value={q}
@@ -35,7 +39,7 @@ function DnaPage() {
         autoComplete="off"
         className="mb-4 h-12 w-full max-w-md rounded-xl border border-line bg-surface px-3 outline-none focus:border-blue"
       />
-      <div className="grid grid-cols-2 items-start gap-3 lg:grid-cols-3">
+      <div className="grid grid-cols-2 items-start gap-2 lg:grid-cols-3 lg:gap-3">
         {rows.map((n) => (
           <DnaCard key={n.id} asset={n} />
         ))}
@@ -57,10 +61,10 @@ function DnaCard({ asset }: { asset: Asset }) {
       <div className="flip-inner">
         <div className="flip-face card">
           <div className={`h-1 ${far ? "bg-warn" : odd ? "bg-blue" : "bg-line"}`} />
-          <div className="flex h-full flex-col p-3 sm:p-4">
+          <div className="flex h-full flex-col p-2.5 sm:p-4">
             <div className="flex items-center justify-between gap-2">
               <span className="inline-flex min-w-0 items-center gap-2">
-                <img src={`/coins/${asset.symbol.toLowerCase()}.png`} alt="" width={28} height={28} decoding="async" className="token shrink-0" />
+                <Token symbol={asset.symbol} size={22} />
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-semibold leading-none">{asset.symbol}</span>
                   <span className="mt-1 block truncate text-[11px] text-muted">{asset.name}</span>
@@ -71,7 +75,7 @@ function DnaCard({ asset }: { asset: Asset }) {
             <div className="mt-3 flex items-end justify-between gap-3">
               <div>
                 <p className="text-[10px] font-medium tracking-wide text-muted uppercase">Deviation</p>
-                <p className="num text-3xl font-semibold leading-none tracking-tight sm:text-4xl">{score == null ? "n/a" : Math.round(score)}</p>
+                <p className="num text-2xl font-semibold leading-none tracking-tight sm:text-4xl">{score == null ? "n/a" : Math.round(score)}</p>
               </div>
               {lead && (
                 <p className={`num text-right text-sm font-semibold ${lead.sigma >= 0 ? "text-pos" : "text-neg"}`}>
@@ -91,13 +95,13 @@ function DnaCard({ asset }: { asset: Asset }) {
         </div>
         <div className="flip-face flip-back card p-3 sm:p-4">
           <div className="flex items-center gap-2">
-            <img src={`/coins/${asset.symbol.toLowerCase()}.png`} alt="" width={18} height={18} decoding="async" className="token shrink-0" />
+            <Token symbol={asset.symbol} size={18} />
             <p className="min-w-0 truncate text-[10px] font-medium tracking-wide text-muted uppercase sm:text-xs">Behaves like {asset.symbol}</p>
           </div>
           <ul className="mt-2">
             {kin.map((n) => (
               <li key={n.id} className="flex items-center gap-2 border-t border-line py-1.5 first:border-0 sm:py-2">
-                <img src={`/coins/${n.symbol.toLowerCase()}.png`} alt="" width={22} height={22} decoding="async" className="token shrink-0" />
+                <Token symbol={n.symbol} size={22} />
                 <span className="min-w-0 flex-1 truncate text-xs font-semibold sm:text-sm">{n.symbol}</span>
                 <span className="num rounded-md bg-bg px-1.5 py-1 text-right text-xs font-semibold text-ink">
                   {n.score}

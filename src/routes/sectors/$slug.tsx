@@ -2,6 +2,7 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { PageHead, Ticker, useMarketEdition } from "@/components/fl/shell";
 import { formatPct, formatUsd, healthState } from "@/lib/faultline/format";
 import { sectorById } from "@/lib/faultline/view";
+import { useDesk } from "@/lib/faultline/desk";
 
 export const Route = createFileRoute("/sectors/$slug")({
   component: SectorPage,
@@ -9,8 +10,9 @@ export const Route = createFileRoute("/sectors/$slug")({
 
 function SectorPage() {
   useMarketEdition();
+  const desk = useDesk();
   const { slug } = Route.useParams();
-  const sector = sectorById(slug);
+  const sector = desk.sectors.find((item) => item.id === slug) ?? sectorById(slug);
   if (!sector) {
     return (
       <>
@@ -24,11 +26,11 @@ function SectorPage() {
       <PageHead
         kicker="Sector"
         title={sector.name}
-        text={`${sector.rotation >= 60 ? "Heating" : sector.rotation <= 40 ? "Cooling" : "Steady"}. Attention heat, not fund flow.`}
+        text={`${sector.rotation >= 60 ? "Heating" : sector.rotation <= 40 ? "Cooling" : "Steady"}. Attention heat, not fund flow. Folio calculated rotation from the live price and volume. These are not exchange quotes.`}
       />
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
         <Stat label="Rotation score" value={String(Math.round(sector.rotation))} />
-        <Stat label="Market cap" value={formatUsd(sector.mcap)} />
+        {desk.kind !== "equities" && <Stat label="Market cap" value={formatUsd(sector.mcap)} />}
         <Stat label="24H volume" value={formatUsd(sector.volume)} />
         <Stat label="Breadth" value={`${Math.round(sector.breadth * 100)}%`} />
         <Stat label="7D performance" value={formatPct(sector.ret7)} />

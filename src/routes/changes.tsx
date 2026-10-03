@@ -56,7 +56,7 @@ function ChangesPage() {
   return (
     <>
       <PageHead kicker="Only what changed" title="Everything since you last looked" text="The overview keeps the newest three. This page keeps the rest." />
-      <div className="mb-3 grid grid-cols-4 gap-2">
+      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Count label="Opened" value={counts.opened} />
         <Count label="Changed" value={counts.changed} />
         <Count label="Cleared" value={counts.cleared} />

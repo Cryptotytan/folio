@@ -1,7 +1,8 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { PageHead, useMarketEdition } from "@/components/fl/shell";
-import { healthRanked, healthState } from "@/lib/faultline/view";
+import { useMemo, useState, useSyncExternalStore } from "react";
+import { PageHead, Token, useMarketEdition } from "@/components/fl/shell";
+import { healthRanked, healthState, initialHealthRanked, subscribeEdition } from "@/lib/faultline/view";
+import { useDesk } from "@/lib/faultline/desk";
 
 export const Route = createFileRoute("/health")({
   component: HealthPage,
@@ -20,12 +21,15 @@ function bandOf(score: number | null): Exclude<Band, "all"> {
 
 function HealthPage() {
   const edition = useMarketEdition();
+  const desk = useDesk();
+  const liveRanked = useSyncExternalStore(subscribeEdition, () => healthRanked, () => initialHealthRanked);
+  const ranked = desk.kind === "crypto" ? liveRanked : desk.healthRanked;
   const [sort, setSort] = useState<Sort>("health");
   const [band, setBand] = useState<Band>("all");
   const [q, setQ] = useState("");
   const rows = useMemo(() => {
     const query = q.trim().toLowerCase();
-    const list = healthRanked
+    const list = ranked
       .filter((n) => (band === "all" || bandOf(n.health) === band) && (!query || `${n.symbol} ${n.name}`.toLowerCase().includes(query)))
       .map((n) => ({
         n,
@@ -37,21 +41,21 @@ function HealthPage() {
       return (b.n.health ?? -1) - (a.n.health ?? -1);
     });
     return list;
-  }, [sort, band, q, edition]);
+  }, [sort, band, q, edition, ranked]);
   const counts = useMemo(() => {
     const tally = { strong: 0, stable: 0, watch: 0, weak: 0 };
-    for (const n of healthRanked) tally[bandOf(n.health)] += 1;
+    for (const n of ranked) tally[bandOf(n.health)] += 1;
     return tally;
-  }, [edition]);
+  }, [ranked]);
 
   return (
     <>
       <PageHead
         kicker="Structural health"
         title="Is participation holding up?"
-        text="A 0–100 read of volume, relative strength, and how orderly the daily moves are. Higher is firmer."
+        text="A 0–100 read of volume, relative strength, and how orderly the daily moves are. Higher is firmer. Folio calculated this from the live price and volume. These are not exchange quotes."
       />
-      <div className="mb-3 grid grid-cols-4 gap-2">
+      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Count label="Strong" value={counts.strong} tone="text-pos" />
         <Count label="Stable" value={counts.stable} tone="text-ink" />
         <Count label="Watch" value={counts.watch} tone="text-blue" />
@@ -78,7 +82,7 @@ function HealthPage() {
             {label}
           </button>
         ))}
-        <span className="ml-auto flex gap-1 text-xs">
+        <span className="flex w-full gap-1 text-xs sm:ml-auto sm:w-auto">
           {(
             [
               ["health", "Score"],
@@ -99,7 +103,7 @@ function HealthPage() {
           return (
             <li key={n.id}>
               <Link to="/asset/$id" params={{ id: String(n.id) }} search={{ tab: "health" }} className="flex items-center gap-3 px-3 py-2.5 sm:px-4">
-                <img src={`/coins/${n.symbol.toLowerCase()}.png`} alt="" width={28} height={28} decoding="async" className="token shrink-0" />
+                <Token symbol={n.symbol} size={28} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-2">
                     <span className="text-sm font-semibold">{n.symbol}</span>

@@ -1,7 +1,7 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { PageHead, Ticker, useMarketEdition } from "@/components/fl/shell";
-import { ASSETS, SECTORS } from "@/lib/faultline/view";
+import { useDesk } from "@/lib/faultline/desk";
 
 export const Route = createFileRoute("/search")({
   component: SearchPage,
@@ -17,27 +17,28 @@ const PAGES = [
 
 function SearchPage() {
   const edition = useMarketEdition();
+  const desk = useDesk();
   const [q, setQ] = useState("");
   const query = q.trim().toLowerCase();
   const assets = useMemo(
     () =>
-      ASSETS.filter(
+      desk.assets.filter(
         (n) => !query || `${n.symbol} ${n.name} ${n.category}`.toLowerCase().includes(query),
       ).slice(0, 24),
-    [query, edition],
+    [query, edition, desk.assets],
   );
   const secs = useMemo(
-    () => SECTORS.filter((s) => !query || `${s.name} ${s.id}`.toLowerCase().includes(query)),
-    [query, edition],
+    () => desk.sectors.filter((s) => !query || `${s.name} ${s.id}`.toLowerCase().includes(query)),
+    [query, edition, desk.sectors],
   );
   const pages = PAGES.filter((page) => !query || page.label.toLowerCase().includes(query));
   return (
     <>
-      <PageHead kicker="Search" title="Find an asset or a sector" text="Try BTC, SOL, AI or DeFi." />
+      <PageHead kicker="Search" title="Find an asset or a sector" text={desk.kind === "equities" ? "Try AAPL, NVDA, gold, or energy." : "Try BTC, SOL, AI, or DeFi."} />
       <input
         value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder="Search BTC, SOL, AI, DeFi..."
+        placeholder={desk.kind === "equities" ? "Search AAPL, NVDA, gold..." : "Search BTC, SOL, AI, DeFi..."}
         autoComplete="off"
         className="mb-6 h-12 w-full max-w-lg rounded-xl border border-line bg-surface px-3 outline-none focus:border-blue"
       />

@@ -25,17 +25,14 @@ function Welcome() {
       <span className="welcome-glass welcome-glass-b" aria-hidden />
       <header className="relative z-10 mx-auto flex h-16 max-w-6xl items-center justify-between px-5">
         <Link to="/" className="logo">
-          <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden>
-            <rect width="22" height="22" rx="6" fill="#162033" />
-            <path d="M4.5 14.2 8.8 9.2l2.6 2.8L17.2 6.4" fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <img src="/mark.png" alt="" width={22} height={22} className="size-[22px] shrink-0" />
           Folio
         </Link>
       </header>
       <main className="relative z-10 mx-auto grid max-w-6xl items-center gap-8 px-4 py-8 md:min-h-[calc(100dvh-4rem)] md:grid-cols-2 md:gap-12 md:px-5 md:py-0">
         <div>
           <p className="kicker">Market intelligence</p>
-          <h1 className="mt-3 text-4xl leading-[1.08] md:text-6xl">See the market beneath the market.</h1>
+          <h1 className="mt-3 text-3xl leading-[1.08] sm:text-4xl md:text-6xl">See the market beneath the market.</h1>
           <p className="mt-5 max-w-md text-base leading-relaxed text-muted">
             Rotation, unusual behavior, and structural strength — read as a brief, not a terminal.
           </p>

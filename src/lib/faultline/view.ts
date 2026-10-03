@@ -15,6 +15,7 @@ export type Asset = {
   category: string;
   price: number;
   volume: number;
+  volumeChange: number | null;
   mcap: number;
   change1: number;
   change7: number;
@@ -68,75 +69,48 @@ export function msUntilUtcMidnight(now = Date.now()) {
   return Math.max(1000, next - now);
 }
 
-function hashDay(key: string) {
-  let h = 2166136261;
-  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);
-  return h >>> 0;
-}
-
-function mulberry32(seed: number) {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
 
-function nudgeAsset(a: Asset, rng: () => number): Asset {
-  const healthN = (rng() * 2 - 1) * 3;
-  const dnaN = (rng() * 2 - 1) * 2;
-  const faultN = (rng() * 2 - 1) * 0.3;
-  const rotN = (rng() * 2 - 1) * 4;
+function blankAsset(a: Asset): Asset {
   return {
     ...a,
-    price: Math.max(1e-8, a.price * (1 + (rng() * 2 - 1) * 0.012)),
-    volume: a.volume * (1 + (rng() * 2 - 1) * 0.04),
-    mcap: a.mcap * (1 + (rng() * 2 - 1) * 0.012),
-    change1: a.change1 + (rng() * 2 - 1) * 0.004,
-    change7: a.change7 + (rng() * 2 - 1) * 0.008,
-    rotation: a.rotation == null ? null : Math.round(clamp(a.rotation + rotN, 0, 100)),
-    health: a.health == null ? null : Math.round(clamp(a.health + healthN, 0, 100)),
-    dna: a.dna == null ? null : Math.round(clamp(a.dna + dnaN, 0, 100) * 10) / 10,
-    faultMag: a.faultMag == null ? null : Math.round(clamp(a.faultMag + faultN, 0, 10) * 10) / 10,
+    volumeChange: null,
+    rotation: null,
+    health: null,
+    healthPrev: null,
+    dna: null,
+    faultMag: null,
+    faultType: null,
+    faultText: null,
+    factors: [],
+    lines: [],
+    neighbors: [],
+    parts: {
+      liquidity: null,
+      volume: null,
+      relativeStrength: null,
+      recovery: null,
+      participation: null,
+      volatilityStability: null,
+    },
   };
 }
 
 function build(day: string) {
-  const rng = mulberry32(hashDay(day));
-  const assets = baseAssets.map((a) => nudgeAsset(a, rng));
+  const assets = baseAssets.map(blankAsset);
   const byId = new Map(assets.map((a) => [a.id, a]));
-  const sectors: Sector[] = snap.sectors.map((s) => {
-    const drift = rng() * 2 - 1;
-    const rotation = clamp(Math.round(s.rotation + drift * 5), 0, 100);
-    const heating: Sector["heating"] = drift > 0.2 ? "up" : drift < -0.2 ? "down" : (s.heating as Sector["heating"]);
-    return {
-      ...(s as Omit<Sector, "assets" | "heating">),
-      rotation,
-      heating,
-      ret7: s.ret7 + drift * 0.008,
-      volumeChange: s.volumeChange + drift * 0.05,
-      breadth: clamp(s.breadth + drift * 0.04, 0, 1),
-      assets: s.assetIds.map((id) => byId.get(id)!),
-    };
-  });
-  const mcapScale = 1 + (rng() * 2 - 1) * 0.01;
-  const volScale = 1 + (rng() * 2 - 1) * 0.03;
-  const mcapSpark = snap.market.mcapSpark.slice();
-  const volSpark = snap.market.volSpark.slice();
-  if (mcapSpark.length) mcapSpark[mcapSpark.length - 1] *= mcapScale;
-  if (volSpark.length) volSpark[volSpark.length - 1] *= volScale;
-  const activeFaults = assets.filter((a) => (a.faultMag ?? 0) >= 3).length;
-  const severeFaults = assets.filter((a) => (a.faultMag ?? 0) >= 6.5).length;
-  const breadth = clamp(Math.round(snap.pulse.breadth + (rng() * 2 - 1) * 4), 0, 100);
-  const volumeActivity = clamp(Math.round(snap.pulse.volumeActivity + (rng() * 2 - 1) * 4), 0, 100);
-  const volatility = clamp(Math.round(snap.pulse.volatility + (rng() * 2 - 1) * 3), 0, 100);
-  const sentiment = clamp(Math.round(snap.pulse.sentiment + (rng() * 2 - 1) * 4), 0, 100);
+  const sectors: Sector[] = snap.sectors.map((s) => ({
+    ...(s as Omit<Sector, "assets" | "heating" | "rotation" | "ret7" | "volumeChange" | "breadth" | "health">),
+    rotation: 0,
+    heating: "flat" as const,
+    ret7: 0,
+    volumeChange: 0,
+    breadth: 0,
+    health: null,
+    assets: s.assetIds.map((id) => byId.get(id)!),
+  }));
   return {
     asOf: day,
     assets,
@@ -144,32 +118,31 @@ function build(day: string) {
     sectors,
     market: {
       ...snap.market,
-      mcap: snap.market.mcap * mcapScale,
-      volume: snap.market.volume * volScale,
-      capChange: snap.market.capChange + (rng() * 2 - 1) * 0.15,
-      btcDominance: clamp(snap.market.btcDominance + (rng() * 2 - 1) * 0.008, 0.3, 0.75),
-      activeFaults,
-      severeFaults,
-      mcapSpark,
-      volSpark,
+      activeFaults: 0,
+      severeFaults: 0,
     },
     pulse: {
       ...snap.pulse,
-      breadth,
-      volumeActivity,
-      volatility,
-      sentiment,
-      state: breadth >= 55 ? "Heating" : breadth <= 40 ? "Cooling" : "Steady",
+      breadth: 0,
+      volumeActivity: 0,
+      volatility: 0,
+      sentiment: 0,
+      state: "Steady",
     },
-    cracks: snap.cracks.map((id) => byId.get(id)!).filter(Boolean),
-    quiet: snap.quiet.map((id) => byId.get(id)!).filter(Boolean),
-    faults: assets.filter((a) => (a.faultMag ?? 0) >= 3).sort((a, b) => (b.faultMag ?? 0) - (a.faultMag ?? 0)),
-    dnaRanked: [...assets].sort((a, b) => (b.dna ?? 0) - (a.dna ?? 0)),
-    healthRanked: [...assets].sort((a, b) => (b.health ?? 0) - (a.health ?? 0)),
+    cracks: [] as Asset[],
+    quiet: [] as Asset[],
+    faults: [] as Asset[],
+    dnaRanked: [...assets],
+    healthRanked: [...assets],
   };
 }
 
 const first = build(utcDay());
+
+export const initialDnaRanked = first.dnaRanked;
+export const initialHealthRanked = first.healthRanked;
+export const initialSectors = first.sectors;
+export const initialFaults = first.faults;
 
 export let asOf = first.asOf;
 export let market = first.market;
@@ -214,17 +187,22 @@ export function quoteState() {
   return quotes;
 }
 
-export function refreshIfNewDay() {
+export function syncEdition() {
   const day = utcDay();
   if (day === asOf) return false;
   publish(day);
   sourceKind = "model";
+  return true;
+}
+
+export function refreshIfNewDay() {
+  if (!syncEdition()) return false;
   listeners.forEach((listener) => listener());
   return true;
 }
 
 export function bookLabel() {
-  return sourceKind === "okx" ? "Live quotes" : "Daily model";
+  return sourceKind === "okx" ? "Live quotes" : "Waiting";
 }
 
 const tape = new Map<string, { price: number; change1: number }>();
@@ -258,40 +236,43 @@ export function bookReady() {
 
 export function applyLiveBook(book: {
   source: "okx" | "model";
-  quotes: { symbol: string; price: number; volume: number; change1: number; change7?: number; volChange?: number; sigma?: number; realizedVol?: number; mcap?: number; health?: number; healthPrev?: number; neighbors?: { symbol: string; score: number }[] }[];
+  quotes: { symbol: string; price: number; volume: number; change1: number; change7?: number; volumeChange?: number; volChange?: number; sigma?: number; realizedVol?: number; mcap?: number; health?: number; healthPrev?: number; neighbors?: { symbol: string; score: number }[] }[];
 }) {
   try {
     if (book.source === "okx" && book.quotes.length && sourceKind === "okx") {
       const unchanged = book.quotes.every((q) => {
         const cur = ASSETS.find((a) => a.symbol === q.symbol);
-        return cur != null && cur.price === q.price && cur.volume === q.volume && cur.change1 === q.change1 && cur.change7 === (q.change7 ?? cur.change7) && cur.mcap === (q.mcap && q.mcap > 0 ? q.mcap : cur.mcap) && cur.health === (q.health ?? cur.health);
+        return cur != null && (!(q.price > 0) || cur.price === q.price) && (!(q.volume > 0) || cur.volume === q.volume) && cur.change1 === q.change1 && cur.volumeChange === (q.volumeChange ?? cur.volumeChange) && cur.change7 === (q.change7 ?? cur.change7) && cur.mcap === (q.mcap && q.mcap > 0 ? q.mcap : cur.mcap) && cur.health === (q.health ?? cur.health);
       });
       if (unchanged) return;
     }
-    publish(utcDay());
     if (book.source !== "okx" || book.quotes.length === 0) {
+      if (sourceKind === "okx") return;
       sourceKind = "model";
       quotes = "model";
       listeners.forEach((listener) => listener());
       return;
     }
+    publish(utcDay());
     const map = new Map(book.quotes.map((q) => [q.symbol, q]));
     const btcQuote = map.get("BTC");
     const btc7 = btcQuote?.change7 ?? 0;
     let next = ASSETS.map((a) => {
       const q = map.get(a.symbol);
-      if (!q || !(q.price > 0) || !(a.price > 0)) return a;
+      if (!q) return a;
+      if (!(q.price > 0) || !(a.price > 0)) {
+        return q.volumeChange == null ? a : { ...a, volumeChange: q.volumeChange };
+      }
       const ratio = q.price / a.price;
       const trusted = ratio > 0.05 && ratio < 20;
-      const change7 = q.change7 ?? a.change7;
+      const change7 = q.change7 ?? 0;
       const volChange = q.volChange;
       const hasHist = q.change7 != null && q.sigma != null && q.realizedVol != null;
       const relative = clamp(50 + (change7 - btc7) * 250, 0, 100);
-      const volumePart = volChange == null ? a.parts.volume : clamp(50 + volChange * 40, 0, 100);
-      const stability = q.realizedVol == null ? a.parts.volatilityStability : clamp(100 - q.realizedVol * 800, 0, 100);
-      const raw = hasHist ? Math.round(relative * 0.45 + (volumePart ?? 50) * 0.25 + (stability ?? 50) * 0.3) : a.health;
-      const health = q.health ?? (sourceKind === "okx" && a.health != null && raw != null ? Math.round(a.health * 0.85 + raw * 0.15) : raw);
-      const dna = q.sigma == null ? a.dna : Math.round(clamp(Math.abs(q.sigma) / 3, 0, 1) * 1000) / 10;
+      const volumePart = volChange == null ? null : clamp(50 + volChange * 40, 0, 100);
+      const stability = q.realizedVol == null ? null : clamp(100 - q.realizedVol * 800, 0, 100);
+      const health = hasHist ? Math.round(relative * 0.45 + (volumePart ?? 50) * 0.25 + (stability ?? 50) * 0.3) : null;
+      const dna = q.sigma == null ? null : Math.round(clamp(Math.abs(q.sigma) / 3, 0, 1) * 1000) / 10;
       const neighbors = q.neighbors?.length
         ? q.neighbors
             .map((n) => {
@@ -299,27 +280,30 @@ export function applyLiveBook(book: {
               return match ? { id: match.id, symbol: match.symbol, score: n.score } : null;
             })
             .filter((n): n is { id: number; symbol: string; score: number } => n != null)
-        : a.neighbors;
+        : [];
       return {
         ...a,
         price: q.price,
         volume: q.volume,
+        volumeChange: q.volumeChange != null ? q.volumeChange : null,
         mcap: q.mcap && q.mcap > 0 ? q.mcap : trusted ? a.mcap * ratio : a.mcap,
         change1: q.change1,
         change7,
         health,
-        healthPrev: q.healthPrev ?? a.health,
+        healthPrev: a.health,
         dna,
         neighbors,
         parts: {
-          ...a.parts,
-          relativeStrength: hasHist ? Math.round(relative) : a.parts.relativeStrength,
-          volume: volumePart == null ? a.parts.volume : Math.round(volumePart),
-          volatilityStability: stability == null ? a.parts.volatilityStability : Math.round(stability),
+          liquidity: null,
+          volume: volumePart == null ? null : Math.round(volumePart),
+          relativeStrength: hasHist ? Math.round(relative) : null,
+          recovery: null,
+          participation: null,
+          volatilityStability: stability == null ? null : Math.round(stability),
         },
-        lines: q.sigma == null ? a.lines : [{ metric: "1D return", sigma: Math.round(q.sigma * 10) / 10 }],
+        lines: q.sigma == null ? [] : [{ metric: "1D return", sigma: Math.round(q.sigma * 10) / 10 }],
         factors: q.change7 == null
-          ? a.factors
+          ? []
           : [
               { metric: "7D price", value: q.change7, baseline: 0, deviation: q.change7 },
               { metric: "Volume vs 7D", value: q.volChange ?? null, baseline: 0, deviation: q.volChange ?? null },
@@ -329,11 +313,10 @@ export function applyLiveBook(book: {
     const bySymbol = new Map(next.map((a) => [a.symbol, a]));
     const sectorDraft = SECTORS.map((s) => {
       const assets = s.assetIds.map((id) => next.find((a) => a.id === id)).filter((a): a is Asset => Boolean(a));
-      const ret7 = assets.length ? assets.reduce((sum, a) => sum + a.change7, 0) / assets.length : s.ret7;
-      const breadth = assets.length ? assets.filter((a) => a.change1 > 0).length / assets.length : s.breadth;
-      const volumeChange = assets.length
-        ? assets.reduce((sum, a) => sum + (map.get(a.symbol)?.volChange ?? 0), 0) / assets.length
-        : s.volumeChange;
+      const ret7 = assets.length ? assets.reduce((sum, a) => sum + a.change7, 0) / assets.length : 0;
+      const breadth = assets.length ? assets.filter((a) => a.change1 > 0).length / assets.length : 0;
+      const known = assets.map((a) => a.volumeChange).filter((n): n is number => n != null);
+      const volumeChange = known.length ? known.reduce((sum, n) => sum + n, 0) / known.length : 0;
       return { ...s, assets, ret7, breadth, volumeChange, volume: assets.reduce((sum, a) => sum + a.volume, 0), mcap: assets.reduce((sum, a) => sum + a.mcap, 0) };
     });
     const ret7s = sectorDraft.map((s) => s.ret7);
@@ -395,8 +378,8 @@ export function applyLiveBook(book: {
     pulse = {
       ...pulse,
       breadth: upShare,
-      volumeActivity: volMoves.length ? Math.round(clamp(50 + (volMoves.reduce((s, n) => s + n, 0) / volMoves.length) * 40, 0, 100)) : pulse.volumeActivity,
-      volatility: vols.length ? Math.round(clamp((vols.reduce((s, n) => s + n, 0) / vols.length) * 800, 0, 100)) : pulse.volatility,
+      volumeActivity: volMoves.length ? Math.round(clamp(50 + (volMoves.reduce((s, n) => s + n, 0) / volMoves.length) * 40, 0, 100)) : 0,
+      volatility: vols.length ? Math.round(clamp((vols.reduce((s, n) => s + n, 0) / vols.length) * 800, 0, 100)) : 0,
       sentiment: Math.round(rotAvg),
       state: upShare >= 55 ? "Heating" : upShare <= 40 ? "Cooling" : "Steady",
     };

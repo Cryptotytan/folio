@@ -1,7 +1,9 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { PageHead, useMarketEdition } from "@/components/fl/shell";
+import { useSyncExternalStore } from "react";
+import { PageHead, Token, useMarketEdition } from "@/components/fl/shell";
 import { formatPct } from "@/lib/faultline/format";
-import { SECTORS, type Asset, type Sector } from "@/lib/faultline/view";
+import { SECTORS, initialSectors, subscribeEdition, type Asset, type Sector } from "@/lib/faultline/view";
+import { useDesk } from "@/lib/faultline/desk";
 
 export const Route = createFileRoute("/sectors/")({
   component: SectorsPage,
@@ -19,22 +21,25 @@ function heatCopy(sector: Sector) {
 
 function SectorsPage() {
   useMarketEdition();
+  const desk = useDesk();
+  const liveSectors = useSyncExternalStore(subscribeEdition, () => SECTORS, () => initialSectors);
+  const sectors = desk.kind === "crypto" ? liveSectors : desk.sectors;
   return (
     <>
       <PageHead
         kicker="Market flow"
         title="Which sectors are gaining attention?"
-        text="Hover a card to turn it. The other side shows who is leading, and how they moved today."
+        text="Hover a card to turn it. The other side shows who is leading, and how they moved today. Folio calculated rotation from the live price and volume. These are not exchange quotes."
       />
-      <div className="grid grid-cols-2 items-start gap-3 lg:grid-cols-3">
-        {[...SECTORS].sort((a, b) => b.rotation - a.rotation).map((s) => {
+      <div className="grid grid-cols-2 items-start gap-2 lg:grid-cols-3 lg:gap-3">
+        {[...sectors].sort((a, b) => b.rotation - a.rotation).map((s) => {
           const up = s.heating === "up";
           const down = s.heating === "down";
           return (
             <Link key={s.id} to="/sectors/$slug" params={{ slug: s.id }} preload="intent" className="flip block">
               <div className="flip-inner">
                 <div className="flip-face card">
-                  <div className="flex h-full flex-col p-3 sm:p-4">
+                  <div className="flex h-full flex-col p-2.5 sm:p-4">
                     <div className="flex items-start justify-between gap-2">
                       <h2 className="line-clamp-2 text-sm leading-tight sm:text-lg">{s.name}</h2>
                       <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium sm:px-2 sm:text-xs ${up ? "bg-emerald-50 text-pos" : down ? "bg-rose-50 text-neg" : "bg-bg text-muted"}`}>
@@ -45,12 +50,12 @@ function SectorsPage() {
                       <div className="flex items-end justify-between gap-2">
                         <div>
                           <p className="text-[10px] font-medium tracking-wide text-muted uppercase">Rotation</p>
-                          <p className="num text-3xl font-semibold leading-none tracking-tight sm:text-4xl">{Math.round(s.rotation)}</p>
+                          <p className="num text-2xl font-semibold leading-none tracking-tight sm:text-4xl">{Math.round(s.rotation)}</p>
                         </div>
                         <ul className="flex gap-1.5 pb-0.5">
                           {leaders(s).map((a) => (
                             <li key={a.id} className="inline-flex items-center gap-1">
-                              <img src={`/coins/${a.symbol.toLowerCase()}.png`} alt="" width={16} height={16} decoding="async" className="token shrink-0" />
+                              <Token symbol={a.symbol} size={16} />
                               <span className="hidden text-[11px] font-semibold sm:inline">{a.symbol}</span>
                             </li>
                           ))}
@@ -100,7 +105,7 @@ function Leader({ asset }: { asset: Asset }) {
   return (
     <li className="flex items-center gap-2 border-t border-line py-1.5 first:border-0 sm:gap-3 sm:py-2.5">
       <span className="inline-flex min-w-0 flex-1 items-start gap-2">
-        <img src={`/coins/${asset.symbol.toLowerCase()}.png`} alt="" width={28} height={28} decoding="async" className="token shrink-0" />
+        <Token symbol={asset.symbol} size={28} />
         <span className="min-w-0">
           <span className="block text-sm font-semibold leading-none">{asset.symbol}</span>
           <span className="mt-1 block truncate text-xs text-muted">{asset.name}</span>

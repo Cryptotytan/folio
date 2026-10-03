@@ -1,12 +1,15 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Token, useMarketEdition } from "@/components/fl/shell";
 import { CandleChart } from "@/components/fl/charts";
-import { formatPct, formatUsd, faultBand, healthState } from "@/lib/faultline/format";
+import { formatPct, formatUsd, faultBand, healthState, compareCopy } from "@/lib/faultline/format";
 import { assetDetail } from "@/lib/faultline/detail";
 import { loadCandles, type Candle } from "@/lib/faultline/candles.functions";
-import { asOf, assetById, faultLabel, SECTORS } from "@/lib/faultline/view";
+import { asOf, assetById, bookLabel, faultLabel, SECTORS } from "@/lib/faultline/view";
+import { listedPath, useDesk, useListedAsset } from "@/lib/faultline/desk";
 import { toggleWatch, useWatch } from "@/lib/faultline/watch";
+import { loadStory, type Story } from "@/lib/faultline/markets.functions";
+import { FOLIO_SCORE, volumeVenue } from "@/lib/faultline/venue";
 
 const candleCache = new Map<string, Candle[]>();
 
@@ -49,8 +52,10 @@ function spanReturn(rows: Candle[], days: number) {
 
 function AssetPage() {
   useMarketEdition();
+  const mounted = useSyncExternalStore(() => () => {}, () => true, () => false);
   const pinned = useWatch();
   const { id } = Route.useParams();
+  const listed = useListedAsset(Number(id));
   const { tab } = Route.useSearch();
   const node = assetById(Number(id));
   const [live, setLive] = useState<Candle[] | null>(null);
@@ -93,6 +98,7 @@ function AssetPage() {
     next[next.length - 1] = last;
     return next;
   }, [live, fallback, node?.price]);
+  if (!node && listed) return <ListedAsset asset={listed} tab={tab} id={id} />;
   if (!node) {
     return (
       <>
@@ -113,11 +119,13 @@ function AssetPage() {
           <Token symbol={node.symbol} size={36} />
           <div>
             <p className="text-sm font-semibold leading-none">{node.symbol}</p>
-            <h1 className="mt-1 text-3xl font-semibold">{node.name}</h1>
+            <h1 className="mt-1 text-2xl font-semibold sm:text-3xl">{node.name}</h1>
             <p className="mt-1 text-2xl font-semibold">{formatUsd(node.price)}</p>
             <p className={node.change1 >= 0 ? "text-pos" : "text-neg"}>{formatPct(node.change1)} today</p>
+            <HardMove symbol={node.symbol} name={node.name} coinId={node.id} change={node.change1} />
+            <p className="text-xs text-muted">{mounted && bookLabel() === "Live quotes" ? "Exchange" : "Waiting"}</p>
             <button type="button" className="btn-ghost mt-2 h-8 px-3 text-xs" onClick={() => toggleWatch(node.id)}>
-              {onList ? "Pinned to brief" : "Pin to brief"}
+              {onList ? "Watching" : "Tell me"}
             </button>
           </div>
         </div>
@@ -128,6 +136,7 @@ function AssetPage() {
           <Score label="Rotation" value={node.rotation == null ? "n/a" : String(Math.round(node.rotation))} />
         </div>
       </div>
+      <p className="mt-3 max-w-xl text-xs leading-relaxed text-muted">{FOLIO_SCORE}</p>
       <div className="mt-4 flex gap-2 overflow-x-auto">
         {TABS.map((item) => (
           <Link
@@ -156,12 +165,13 @@ function AssetPage() {
               <dl className="mt-3 space-y-2 text-sm">
                 <Row k="Market cap" v={formatUsd(node.mcap)} />
                 <Row k="Volume" v={formatUsd(node.volume)} />
+                <Row k="Volume change" v={node.volumeChange == null ? "—" : `${formatPct(node.volumeChange)} · ${volumeVenue(node.symbol)}`} />
                 <Row k="7D" v={move7 == null ? formatPct(node.change7) : formatPct(move7)} />
                 <Row k="Sector" v={sector ? sector.name : node.category} />
               </dl>
-              {sector && move7 != null && (
+              {sector && (
                 <p className="mt-4 text-sm">
-                  {node.symbol} is {formatPct(move7)} over these candles. {sector.name} is {formatPct(sector.ret7)} on today's edition.
+                  {compareCopy(node.name, node.change1, sector.name, sector.assets.reduce((sum, asset) => sum + asset.change1, 0) / Math.max(1, sector.assets.length))}
                 </p>
               )}
               <h3 className="mt-5 font-semibold">Behaves like</h3>
@@ -180,6 +190,17 @@ function AssetPage() {
               </ul>
             </article>
           </div>
+        )}
+        {tab === "overview" && (
+          <WhyMoved
+            symbol={node.symbol}
+            name={node.name}
+            change={node.change1}
+            fault={node.faultText}
+            dna={node.dna}
+            sectorName={sector?.name}
+            sectorChange={sector ? sector.assets.reduce((sum, asset) => sum + asset.change1, 0) / Math.max(1, sector.assets.length) : undefined}
+          />
         )}
         {tab === "dna" && <DnaPanel node={node} />}
         {tab === "health" && <HealthPanel node={node} />}
@@ -222,6 +243,7 @@ function DnaPanel({ node }: { node: NonNullable<ReturnType<typeof assetById>> })
     <article className="card p-5">
       <h2 className="text-xl font-semibold">Behavioral DNA</h2>
       <p className="mt-2 max-w-2xl text-sm leading-relaxed">{lead}</p>
+      <p className="mt-2 max-w-2xl text-xs leading-relaxed text-muted">{FOLIO_SCORE}</p>
       <ul className="mt-5 space-y-4">
         {node.lines.map((line) => {
           const side = line.sigma > 0.5 ? "higher than" : line.sigma < -0.5 ? "lower than" : "close to";
@@ -272,7 +294,7 @@ function HealthPanel({ node }: { node: NonNullable<ReturnType<typeof assetById>>
   const parts = [
     ["Liquidity", node.parts.liquidity, "how easily size can trade without the price jumping"],
     ["Volume", node.parts.volume, "whether trading activity is holding up against its own recent level"],
-    ["Relative strength", node.parts.relativeStrength, "whether it is keeping up with Bitcoin"],
+    ["Relative strength", node.parts.relativeStrength, node.id >= 1_000_000 ? "whether it is keeping up with the index" : "whether it is keeping up with Bitcoin"],
     ["Recovery", node.parts.recovery, "whether it is repairing after a drawdown"],
     ["Volatility stability", node.parts.volatilityStability, "whether the size of daily moves is staying orderly"],
     ["Participation", node.parts.participation, "whether the move has breadth behind it, not just price"],
@@ -281,6 +303,7 @@ function HealthPanel({ node }: { node: NonNullable<ReturnType<typeof assetById>>
     <article className="card p-5">
       <h2 className="text-xl font-semibold">Structural health</h2>
       <p className="mt-2 max-w-2xl text-sm leading-relaxed">{shift}</p>
+      <p className="mt-2 max-w-2xl text-xs leading-relaxed text-muted">{FOLIO_SCORE}</p>
       <ul className="mt-5 grid gap-3 sm:grid-cols-2">
         {parts.map(([label, value, meaning]) => (
           <li key={label} className="rounded-xl bg-bg px-3 py-3 text-sm">
@@ -317,6 +340,7 @@ function FaultPanel({ node, sector }: { node: NonNullable<ReturnType<typeof asse
           ? `${kind} ${node.faultText ?? ""} Magnitude is ${mag.toFixed(1)} out of 10, which this edition calls ${faultBand(mag).toLowerCase()}. A fault is a disagreement between signals. It is not a forecast and not a verdict.`
           : `${node.symbol} does not clear the fault line. Magnitude is ${mag.toFixed(1)} out of 10. The signals that usually define a contradiction are still close enough to agree.`}
       </p>
+      <p className="mt-2 max-w-2xl text-xs leading-relaxed text-muted">{FOLIO_SCORE}</p>
     </article>
   );
 }
@@ -380,5 +404,190 @@ function EvidencePanel({ node }: { node: NonNullable<ReturnType<typeof assetById
         {node.factors.length === 0 && node.lines.length === 0 && <li className="text-muted">No factor breakdown was stored for this asset.</li>}
       </ul>
     </article>
+  );
+}
+
+function HardMove({
+  symbol,
+  name,
+  coinId,
+  change,
+  kind = "crypto",
+}: {
+  symbol: string;
+  name: string;
+  coinId?: number;
+  change: number;
+  kind?: "crypto" | "stock";
+}) {
+  const hard = Math.abs(change) >= 0.05;
+  const [story, setStory] = useState<Story | null>(null);
+  useEffect(() => {
+    if (!hard) return;
+    let cancel = false;
+    loadStory({ data: { symbol, name, kind, coinId } })
+      .then((next) => {
+        if (!cancel) setStory(next);
+      })
+      .catch(() => {
+        if (!cancel) setStory(null);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [hard, symbol, name, coinId, kind]);
+  if (!hard) return null;
+  const first = name.split(" ")[0]?.toLowerCase() ?? "";
+  const blob = `${story?.reason ?? ""}`.toLowerCase();
+  const fits = Boolean(story?.url && story.reason && story.reason !== "No published report names this yet." && (blob.includes(symbol.toLowerCase()) || (first.length > 2 && blob.includes(first))));
+  return (
+    <div className="mt-2 max-w-md">
+      <p className="text-sm leading-snug text-ink">{fits ? story?.reason : story ? "No report names this move yet." : "Looking for a report."}</p>
+      {fits && story?.url && (
+        <a href={story.url} target="_blank" rel="noreferrer" className="mt-1 inline-flex text-sm font-medium text-blue">
+          {story.source ? `${story.source} →` : "Read the report →"}
+        </a>
+      )}
+    </div>
+  );
+}
+
+function WhyMoved({
+  symbol,
+  name,
+  change,
+  fault,
+  dna,
+  sectorName,
+  sectorChange,
+}: {
+  symbol: string;
+  name: string;
+  change: number;
+  fault: string | null;
+  dna?: number | null;
+  sectorName?: string;
+  sectorChange?: number;
+}) {
+  const unusual =
+    dna == null
+      ? `${symbol} does not have enough of its own history to say how unusual today is.`
+      : dna >= 55
+        ? `Today is unusual for ${symbol}. The deviation from its own pattern is ${Math.round(dna)}.`
+        : `Today sits inside the range ${symbol} usually occupies. Deviation ${Math.round(dna)}.`;
+  const withSector = sectorName != null && sectorChange != null ? compareCopy(name, change, sectorName, sectorChange) : null;
+  return (
+    <article className="card mt-4 p-4">
+      <h2 className="font-semibold">Why it moved</h2>
+      <p className="mt-2 text-sm leading-relaxed">{unusual}</p>
+      {withSector && <p className="mt-2 text-sm leading-relaxed">{withSector}</p>}
+      {fault && <p className="mt-2 text-sm leading-relaxed">{fault}</p>}
+    </article>
+  );
+}
+
+function ListedAsset({ asset, tab, id }: { asset: import("@/lib/faultline/view").Asset; tab: Tab; id: string }) {
+  const desk = useDesk();
+  const pinned = useWatch();
+  const onList = pinned.includes(asset.id);
+  const sector = desk.sectors.find((item) => item.assetIds.includes(asset.id));
+  const path = listedPath(asset.id);
+  const candles = path.map((bar, i) => {
+    const open = i ? path[i - 1].c : bar.c;
+    return { d: bar.d, o: open, h: Math.max(open, bar.c), l: Math.min(open, bar.c), c: bar.c, v: bar.v };
+  });
+  const sectorChange = sector ? sector.assets.reduce((sum, row) => sum + row.change1, 0) / Math.max(1, sector.assets.length) : undefined;
+  return (
+    <>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <Token symbol={asset.symbol} size={36} />
+          <div>
+            <p className="text-sm font-semibold leading-none">{asset.symbol}</p>
+            <h1 className="mt-1 text-2xl font-semibold sm:text-3xl">{asset.name}</h1>
+            <p className="mt-1 text-2xl font-semibold">{formatUsd(asset.price)}</p>
+            <p className={asset.change1 >= 0 ? "text-pos" : "text-neg"}>{formatPct(asset.change1)} today</p>
+            <HardMove symbol={asset.symbol} name={asset.name} change={asset.change1} kind="stock" />
+            <p className="text-xs text-muted">{desk.source}</p>
+            <button type="button" className="btn-ghost mt-2 h-8 px-3 text-xs" onClick={() => toggleWatch(asset.id)}>
+              {onList ? "Watching" : "Tell me"}
+            </button>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Score label="Health" value={asset.health == null ? "n/a" : String(asset.health)} />
+          <Score label="DNA" value={asset.dna == null ? "n/a" : String(Math.round(asset.dna))} />
+          <Score label="Faults" value={(asset.faultMag ?? 0) >= 5 ? "1" : "0"} />
+          <Score label="Rotation" value={asset.rotation == null ? "n/a" : String(Math.round(asset.rotation))} />
+        </div>
+      </div>
+      <p className="mt-3 max-w-xl text-xs leading-relaxed text-muted">{FOLIO_SCORE}</p>
+      <div className="mt-4 flex gap-2 overflow-x-auto">
+        {TABS.map((item) => (
+          <Link key={item} to="/asset/$id" params={{ id }} search={{ tab: item }} className={`h-8 shrink-0 rounded-full px-3 text-xs capitalize leading-8 ${tab === item ? "bg-ink text-white" : "border border-line bg-surface text-muted"}`}>
+            {item}
+          </Link>
+        ))}
+      </div>
+      <div className="mt-6">
+        {tab === "overview" && (
+          <div className="grid gap-4 lg:grid-cols-5">
+            <article className="card p-4 lg:col-span-3">
+              <h2 className="font-semibold">Price</h2>
+              <p className="text-xs text-muted">{candles.length ? "Daily closes. The last bar is the latest price on this tape." : "Waiting for the daily tape."}</p>
+              <CandleChart data={candles} />
+            </article>
+            <article className="card p-4 lg:col-span-2">
+              <h2 className="font-semibold">Market</h2>
+              <dl className="mt-3 space-y-2 text-sm">
+                <Row k="Volume" v={formatUsd(asset.volume)} />
+                <Row k="Volume change" v={asset.volumeChange == null ? "—" : `${formatPct(asset.volumeChange)} · ${volumeVenue(asset.symbol, true)}`} />
+                <Row k="7D" v={formatPct(asset.change7)} />
+                <Row k="Sector" v={sector ? sector.name : asset.category} />
+              </dl>
+              {sector && sectorChange != null && <p className="mt-4 text-sm">{compareCopy(asset.name, asset.change1, sector.name, sectorChange)}</p>}
+              <h3 className="mt-5 font-semibold">Behaves like</h3>
+              <ul className="mt-2 space-y-2">
+                {asset.neighbors.map((nb) => (
+                  <li key={nb.id}>
+                    <Link to="/asset/$id" params={{ id: String(nb.id) }} search={{ tab: "overview" }} className="flex items-center justify-between gap-3">
+                      <span className="inline-flex items-center gap-2">
+                        <Token symbol={nb.symbol} size={22} />
+                        <span className="font-medium">{nb.symbol}</span>
+                      </span>
+                      <span className="text-sm text-muted">{nb.score} similarity</span>
+                    </Link>
+                  </li>
+                ))}
+                {asset.neighbors.length === 0 && <li className="text-sm text-muted">No close match on this tape.</li>}
+              </ul>
+            </article>
+          </div>
+        )}
+        {tab === "overview" && (
+          <WhyMoved
+            symbol={asset.symbol}
+            name={asset.name}
+            change={asset.change1}
+            fault={asset.faultText}
+            dna={asset.dna}
+            sectorName={sector?.name}
+            sectorChange={sectorChange}
+          />
+        )}
+        {tab === "dna" && <DnaPanel node={asset} />}
+        {tab === "health" && <HealthPanel node={asset} />}
+        {tab === "faults" && <FaultPanel node={asset} sector={sector?.name} />}
+        {tab === "history" && <HistoryPanel symbol={asset.symbol} events={[]} />}
+        {tab === "evidence" && (
+          <article className="card p-5 text-sm">
+            <h2 className="text-lg font-semibold">Evidence</h2>
+            <p className="mt-2 max-w-2xl leading-relaxed">
+              {desk.source}. Health, deviation, and faults are read from this name’s own daily closes, then compared with {sector?.name ?? "its group"}. A blank figure was not published by the exchange. None of these scores is a forecast.
+            </p>
+          </article>
+        )}
+      </div>
+    </>
   );
 }

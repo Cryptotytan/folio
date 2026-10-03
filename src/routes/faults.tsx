@@ -1,9 +1,10 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { PageHead, Ticker, refreshBook, useMarketEdition } from "@/components/fl/shell";
 import { formatPct } from "@/lib/faultline/format";
 import { recordFaults, type FaultEvent } from "@/lib/faultline/fault-history";
-import { faultLabel, faults, quoteState, type Asset } from "@/lib/faultline/view";
+import { faultLabel, faults, initialFaults, quoteState, subscribeEdition, type Asset } from "@/lib/faultline/view";
+import { useDesk } from "@/lib/faultline/desk";
 
 export const Route = createFileRoute("/faults")({
   component: FaultsPage,
@@ -43,6 +44,7 @@ function dayLabel(iso: string) {
 
 function FaultsPage() {
   const edition = useMarketEdition();
+  const desk = useDesk();
   const [filter, setFilter] = useState("all");
   const [list, setList] = useState<Asset[] | null>(null);
   const [history, setHistory] = useState<FaultEvent[]>([]);
@@ -57,7 +59,8 @@ function FaultsPage() {
     if (!localStorage.getItem(CURSOR)) localStorage.setItem(CURSOR, new Date().toISOString());
   }, [edition, list]);
 
-  const shown = (list ?? faults).filter((n) => rule.match(n.faultType));
+  const liveFaults = useSyncExternalStore(subscribeEdition, () => faults, () => initialFaults);
+  const shown = (desk.kind === "crypto" ? (list ?? liveFaults) : desk.faults).filter((n) => rule.match(n.faultType));
 
   const refresh = () => {
     setBusy(true);
@@ -79,9 +82,9 @@ function FaultsPage() {
       <PageHead
         kicker="Market faults"
         title="Unusual contradictions"
-        text="A disagreement between signals. A description, not an accusation or a forecast. Refresh to pull what changed since you last looked. History never drops a past fault."
+        text="A disagreement between signals. A description, not an accusation or a forecast. Folio calculated this from the live price and volume. These are not exchange quotes."
       />
-      <div className="mb-3 flex items-center gap-2 overflow-x-auto">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         {FILTERS.map((f) => (
           <button
             key={f.id}
@@ -119,7 +122,7 @@ function FaultsPage() {
           </ul>
         </div>
       )}
-      {filter === "history" ? (
+      {filter === "history" && desk.kind === "crypto" ? (
         <HistoryView events={history} />
       ) : (
         <ul className="card divide-y divide-line">

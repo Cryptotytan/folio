@@ -7,6 +7,7 @@ export type LiveQuote = {
   volume: number;
   change1: number;
   change7?: number;
+  volumeChange?: number;
   volChange?: number;
   sigma?: number;
   realizedVol?: number;
@@ -45,7 +46,7 @@ type Book = {
   quotes: LiveQuote[];
 };
 
-type Hist = { change7: number; volChange: number; sigma: number; realizedVol: number; rets: number[] };
+type Hist = { change7: number; volChange: number; volumeChange?: number; priorVolume: number; sigma: number; realizedVol: number; rets: number[] };
 
 const meta = new Map((snap.assets as { id: number; symbol: string; name: string }[]).map((a) => [a.symbol, a]));
 const sectors = (snap.sectors as { name: string; assetIds: number[] }[]).map((s) => ({
@@ -89,34 +90,145 @@ function stdev(xs: number[]) {
   return Math.sqrt(v);
 }
 
+const PAIR: Record<string, string> = { MKR: "SKY-USDT", USDT: "USDT-USD" };
+const KUCOIN: Record<string, string> = { MNT: "MNT-USDT", RUNE: "RUNE-USDT", AKT: "AKT-USDT", XMR: "XMR-USDT" };
+const KRAKEN: Record<string, string> = { TON: "TONUSD", DAI: "DAIUSD" };
+
+function hourQuote(row: string[]) {
+  const quote = Number(row[7]);
+  if (quote > 0) return quote;
+  const ccy = Number(row[6]);
+  return ccy > 0 ? ccy : 0;
+}
+
+function windowChange(recent: number, prior: number) {
+  if (!(recent > 0) || !(prior > 0)) return undefined;
+  return recent / prior - 1;
+}
+
+async function readJson(url: string, signal: AbortSignal) {
+  const res = await fetch(url, { signal, headers: { Accept: "application/json" } });
+  if (!res.ok) return null;
+  return await res.json();
+}
+
+async function hourChange(symbol: string, signal: AbortSignal) {
+  try {
+    const inst = PAIR[symbol] ?? `${symbol}-USDT`;
+    const body = (await readJson(`https://www.okx.com/api/v5/market/candles?instId=${inst}&bar=1H&limit=48`, signal)) as { data?: string[][] } | null;
+    const hours = body?.data ?? [];
+    if (hours.length >= 48) {
+      const recent = hours.slice(0, 24).reduce((sum, row) => sum + hourQuote(row), 0);
+      const prior = hours.slice(24, 48).reduce((sum, row) => sum + hourQuote(row), 0);
+      const change = windowChange(recent, prior);
+      if (change != null) return change;
+    }
+  } catch {
+    /* try the next book */
+  }
+  try {
+    const bars = (await readJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}USDT&interval=1h&limit=48`, signal)) as string[][] | null;
+    if (Array.isArray(bars) && bars.length >= 48) {
+      const prior = bars.slice(0, 24).reduce((sum, row) => sum + (Number(row[7]) > 0 ? Number(row[7]) : 0), 0);
+      const recent = bars.slice(24, 48).reduce((sum, row) => sum + (Number(row[7]) > 0 ? Number(row[7]) : 0), 0);
+      const change = windowChange(recent, prior);
+      if (change != null) return change;
+    }
+  } catch {
+    /* try the next book */
+  }
+  const kucoin = KUCOIN[symbol];
+  if (kucoin) {
+    try {
+      const body = (await readJson(`https://api.kucoin.com/api/v1/market/candles?type=1hour&symbol=${kucoin}`, signal)) as { data?: string[][] } | null;
+      const hours = body?.data ?? [];
+      if (hours.length >= 48) {
+        const vol = (row: string[]) => (Number(row[6]) > 0 ? Number(row[6]) : 0);
+        const change = windowChange(hours.slice(0, 24).reduce((sum, row) => sum + vol(row), 0), hours.slice(24, 48).reduce((sum, row) => sum + vol(row), 0));
+        if (change != null) return change;
+      }
+    } catch {
+      /* try the next book */
+    }
+  }
+  const kraken = KRAKEN[symbol];
+  if (!kraken) return undefined;
+  try {
+    const body = (await readJson(`https://api.kraken.com/0/public/OHLC?pair=${kraken}&interval=60`, signal)) as { result?: Record<string, string[][]> } | null;
+    const rows = Object.entries(body?.result ?? {}).find(([key]) => key !== "last")?.[1];
+    if (!rows || rows.length < 48) return undefined;
+    const quote = (row: string[]) => {
+      const volume = Number(row[6]);
+      const vwap = Number(row[5]);
+      return volume > 0 && vwap > 0 ? volume * vwap : 0;
+    };
+    const recent = rows.slice(-24).reduce((sum, row) => sum + quote(row), 0);
+    const prior = rows.slice(-48, -24).reduce((sum, row) => sum + quote(row), 0);
+    return windowChange(recent, prior);
+  } catch {
+    return undefined;
+  }
+}
+
 async function oneHistory(symbol: string): Promise<void> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 8000);
   try {
-    const res = await fetch(`https://www.okx.com/api/v5/market/candles?instId=${symbol}-USDT&bar=1D&limit=30`, {
-      signal: ctrl.signal,
-      headers: { Accept: "application/json" },
+    const inst = PAIR[symbol] ?? `${symbol}-USDT`;
+    const volumeTask = hourChange(symbol, ctrl.signal).then((change) => {
+      if (change != null) {
+        const prev = history.get(symbol);
+        history.set(symbol, {
+          change7: prev?.change7 ?? 0,
+          volChange: prev?.volChange ?? 0,
+          volumeChange: change,
+          priorVolume: prev?.priorVolume ?? 0,
+          sigma: prev?.sigma ?? 0,
+          realizedVol: prev?.realizedVol ?? 0,
+          rets: prev?.rets ?? [],
+        });
+      }
+      return change;
     });
-    if (!res.ok) return;
-    const body = (await res.json()) as { data?: string[][] };
+    const [dailyRes, volumeChange] = await Promise.all([
+      fetch(`https://www.okx.com/api/v5/market/candles?instId=${inst}&bar=1D&limit=30`, {
+        signal: ctrl.signal,
+        headers: { Accept: "application/json" },
+      }),
+      volumeTask,
+    ]);
+    if (!dailyRes.ok) {
+      if (volumeChange != null) {
+        history.set(symbol, { change7: 0, volChange: 0, volumeChange, priorVolume: 0, sigma: 0, realizedVol: 0, rets: [] });
+      }
+      return;
+    }
+    const body = (await dailyRes.json()) as { data?: string[][] };
     const rows = (body.data ?? [])
-      .map((row) => ({ c: Number(row[4]), v: Number(row[7] ?? row[6]) }))
-      .filter((row) => row.c > 0)
+      .map((row) => ({ c: Number(row[4]), v: hourQuote(row), done: row[8] === "1" }))
+      .filter((row) => row.c > 0 && row.done)
       .reverse();
-    if (rows.length < 8) return;
+    if (rows.length < 8) {
+      if (volumeChange != null) {
+        history.set(symbol, { change7: 0, volChange: 0, volumeChange, priorVolume: 0, sigma: 0, realizedVol: 0, rets: [] });
+      }
+      return;
+    }
     const last = rows.length - 1;
     const prev = rows[last - 7].c;
     const rets: number[] = [];
     for (let i = 1; i < rows.length; i++) rets.push(rows[i].c / rows[i - 1].c - 1);
-    const prior = rets.slice(0, -1);
-    const sd = stdev(prior);
+    const earlier = rets.slice(0, -1);
+    const sd = stdev(earlier);
     const today = rets[rets.length - 1];
     const vols = rows.slice(last - 7, last).map((row) => row.v).filter((n) => n > 0);
     const base = mean(vols);
     history.set(symbol, {
       change7: prev > 0 ? rows[last].c / prev - 1 : 0,
-      volChange: base > 0 ? rows[last].v / base - 1 : 0,
-      sigma: sd > 1e-8 ? (today - mean(prior)) / sd : 0,
+      volChange: base > 0 && rows[last].v > 0 ? rows[last].v / base - 1 : 0,
+      volumeChange,
+      priorVolume: 0,
+      sigma: sd > 1e-8 ? (today - mean(earlier)) / sd : 0,
       realizedVol: stdev(rets.slice(-14)),
       rets: rets.slice(-14),
     });
@@ -129,17 +241,20 @@ async function oneHistory(symbol: string): Promise<void> {
 
 function ensureHistory() {
   if (historyFlight) return;
-  if (history.size > 0 && Date.now() - historyAt < 10 * 60 * 1000) return;
+  const missing = tracked.filter((symbol) => history.get(symbol)?.volumeChange == null);
+  if (!missing.length && history.size > 0 && Date.now() - historyAt < 10 * 60 * 1000) return;
+  const todo = missing.length ? missing : tracked;
   historyFlight = (async () => {
     let i = 0;
     async function worker() {
-      while (i < tracked.length) {
-        const symbol = tracked[i++];
+      while (i < todo.length) {
+        const symbol = todo[i++];
         await oneHistory(symbol);
       }
     }
     await Promise.all(Array.from({ length: 6 }, () => worker()));
-    historyAt = Date.now();
+    if (tracked.every((symbol) => history.get(symbol)?.volumeChange != null)) historyAt = Date.now();
+    cache = null;
   })().finally(() => {
     historyFlight = null;
   });
@@ -351,8 +466,8 @@ function notice(at: string, info: { id: number; symbol: string; name: string }, 
 
 async function pull(): Promise<Book> {
   const day = utcDay();
+  if (cache && cache.day === day && Date.now() - cache.at < 45_000) return cache;
   ensureHistory();
-  if (cache && cache.day === day && Date.now() - cache.at < 15_000) return cache;
   const capTask = marketCaps();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 8000);
@@ -373,26 +488,43 @@ async function pull(): Promise<Book> {
     for (const row of body.data ?? []) {
       if (!row.instId?.endsWith("-USDT")) continue;
       const symbol = row.instId.slice(0, -5);
-      if (!trackedSet.has(symbol)) continue;
+      const ours = symbol === "SKY" && trackedSet.has("MKR") && !trackedSet.has("SKY") ? "MKR" : symbol;
+      if (!trackedSet.has(ours)) continue;
       const price = Number(row.last);
       const open = Number(row.open24h);
       const volume = Number(row.volCcy24h);
       if (!Number.isFinite(price) || price <= 0) continue;
-      const hist = history.get(symbol);
+      const hist = history.get(ours);
       quotes.push({
-        symbol,
+        symbol: ours,
         price,
         volume: Number.isFinite(volume) ? volume : 0,
         change1: open > 0 ? (price - open) / open : 0,
         change7: hist?.change7,
+        volumeChange: hist?.volumeChange,
         volChange: hist?.volChange,
         sigma: hist?.sigma,
         realizedVol: hist?.realizedVol,
-        mcap: capMap.get(symbol),
+        mcap: capMap.get(ours),
       });
     }
+    for (const symbol of tracked) {
+      if (quotes.some((quote) => quote.symbol === symbol)) continue;
+      const volumeChange = history.get(symbol)?.volumeChange;
+      if (volumeChange == null) continue;
+      quotes.push({ symbol, price: 0, volume: 0, change1: 0, volumeChange });
+    }
+    for (const quote of quotes) {
+      const latest = history.get(quote.symbol);
+      if (latest?.volumeChange != null) quote.volumeChange = latest.volumeChange;
+      if (quote.change7 == null && latest?.change7 != null) quote.change7 = latest.change7;
+    }
+    if (!quotes.length) {
+      if (cache?.source === "okx" && cache.quotes.length) return cache;
+      return { day, source: "model", quotes: [], at: 0 };
+    }
     if (quotes.length) settle(quotes);
-    cache = { day, source: quotes.length ? "okx" : "model", quotes, at: Date.now() };
+    cache = { day, source: "okx", quotes, at: Date.now() };
     void capTask.then((map) => {
       if (!cache || !map.size) return;
       for (const quote of cache.quotes) {
@@ -401,7 +533,8 @@ async function pull(): Promise<Book> {
       }
     });
   } catch {
-    cache = { day, source: "model", quotes: [], at: Date.now() };
+    if (cache?.source === "okx" && cache.quotes.length) return cache;
+    return { day, source: "model", quotes: [], at: 0 };
   } finally {
     clearTimeout(timer);
   }

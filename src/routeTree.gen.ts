@@ -15,6 +15,7 @@ import { Route as ChangesRouteImport } from './routes/changes'
 import { Route as DnaRouteImport } from './routes/dna'
 import { Route as FaultsRouteImport } from './routes/faults'
 import { Route as HealthRouteImport } from './routes/health'
+import { Route as MarketsRouteImport } from './routes/markets'
 import { Route as SearchRouteImport } from './routes/search'
 import { Route as SignalsRouteImport } from './routes/signals'
 import { Route as ApiWorldRouteImport } from './routes/api/world'
@@ -53,6 +54,11 @@ const FaultsRoute = FaultsRouteImport.update({
 const HealthRoute = HealthRouteImport.update({
   id: '/health',
   path: '/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MarketsRoute = MarketsRouteImport.update({
+  id: '/markets',
+  path: '/markets',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SearchRoute = SearchRouteImport.update({
@@ -108,6 +114,7 @@ export interface FileRoutesByFullPath {
   '/dna': typeof DnaRoute
   '/faults': typeof FaultsRoute
   '/health': typeof HealthRoute
+  '/markets': typeof MarketsRoute
   '/search': typeof SearchRoute
   '/signals': typeof SignalsRoute
   '/api/world': typeof ApiWorldRoute
@@ -125,6 +132,7 @@ export interface FileRoutesByTo {
   '/dna': typeof DnaRoute
   '/faults': typeof FaultsRoute
   '/health': typeof HealthRoute
+  '/markets': typeof MarketsRoute
   '/search': typeof SearchRoute
   '/signals': typeof SignalsRoute
   '/api/world': typeof ApiWorldRoute
@@ -143,6 +151,7 @@ export interface FileRoutesById {
   '/dna': typeof DnaRoute
   '/faults': typeof FaultsRoute
   '/health': typeof HealthRoute
+  '/markets': typeof MarketsRoute
   '/search': typeof SearchRoute
   '/signals': typeof SignalsRoute
   '/api/world': typeof ApiWorldRoute
@@ -162,6 +171,7 @@ export interface FileRouteTypes {
     | '/dna'
     | '/faults'
     | '/health'
+    | '/markets'
     | '/search'
     | '/signals'
     | '/api/world'
@@ -179,6 +189,7 @@ export interface FileRouteTypes {
     | '/dna'
     | '/faults'
     | '/health'
+    | '/markets'
     | '/search'
     | '/signals'
     | '/api/world'
@@ -196,6 +207,7 @@ export interface FileRouteTypes {
     | '/dna'
     | '/faults'
     | '/health'
+    | '/markets'
     | '/search'
     | '/signals'
     | '/api/world'
@@ -214,6 +226,7 @@ export interface RootRouteChildren {
   DnaRoute: typeof DnaRoute
   FaultsRoute: typeof FaultsRoute
   HealthRoute: typeof HealthRoute
+  MarketsRoute: typeof MarketsRoute
   SearchRoute: typeof SearchRoute
   SignalsRoute: typeof SignalsRoute
   ApiWorldRoute: typeof ApiWorldRoute
@@ -267,6 +280,13 @@ declare module '@tanstack/react-router' {
       path: '/health'
       fullPath: '/health'
       preLoaderRoute: typeof HealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/markets': {
+      id: '/markets'
+      path: '/markets'
+      fullPath: '/markets'
+      preLoaderRoute: typeof MarketsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/search': {
@@ -342,6 +362,7 @@ const rootRouteChildren: RootRouteChildren = {
   DnaRoute: DnaRoute,
   FaultsRoute: FaultsRoute,
   HealthRoute: HealthRoute,
+  MarketsRoute: MarketsRoute,
   SearchRoute: SearchRoute,
   SignalsRoute: SignalsRoute,
   ApiWorldRoute: ApiWorldRoute,
